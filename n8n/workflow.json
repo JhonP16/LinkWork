@@ -1,0 +1,312 @@
+{
+  "name": "Empleabilidad Colombia - Employment Search Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "employment-search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🚀 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "employment-search-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizar y validar datos del webhook\nconst body = $input.first().json.body || $input.first().json;\n\nconst searchId = body.search_id;\nconst userId = body.user_id;\nconst profile = body.profile;\nconst criteria = body.criteria || {};\n\nif (!searchId || !userId || !profile) {\n  throw new Error('Datos incompletos: se requiere search_id, user_id y profile');\n}\n\n// Normalizar perfil\nconst normalizedProfile = {\n  user_id: userId,\n  city: (profile.city || '').toLowerCase().trim(),\n  available_to_relocate: Boolean(profile.available_to_relocate),\n  relocation_cities: Array.isArray(profile.relocation_cities) ? profile.relocation_cities : [],\n  work_modality: Array.isArray(profile.work_modality) ? profile.work_modality : ['presencial'],\n  immediate_availability: Boolean(profile.immediate_availability !== false),\n  desired_salary_min: parseInt(profile.desired_salary_min) || null,\n  desired_salary_max: parseInt(profile.desired_salary_max) || null,\n  education_level: profile.education_level || null,\n  years_experience: parseInt(profile.years_experience) || 0,\n  experience_sectors: Array.isArray(profile.experience_sectors) ? profile.experience_sectors : [],\n  technical_skills: Array.isArray(profile.technical_skills) ? profile.technical_skills : [],\n  soft_skills: Array.isArray(profile.soft_skills) ? profile.soft_skills : [],\n  languages: Array.isArray(profile.languages) ? profile.languages : [],\n  bio: profile.bio || ''\n};\n\nconsole.log(`[NORMALIZE] search_id=${searchId} user_id=${userId} skills=${normalizedProfile.technical_skills.length}`);\n\nreturn [{\n  json: {\n    search_id: searchId,\n    user_id: userId,\n    profile: normalizedProfile,\n    criteria: {\n      city: criteria.city || profile.city,\n      work_modality: criteria.work_modality || profile.work_modality,\n      min_salary: criteria.min_salary || profile.desired_salary_min,\n      max_salary: criteria.max_salary || profile.desired_salary_max,\n      keywords: criteria.keywords || '',\n      categories: criteria.categories || []\n    },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "normalize-data",
+      "name": "🔧 Normalizar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE searches SET status = 'processing', workflow_execution_id = '{{ $execution.id }}' WHERE id = '{{ $json.search_id }}' RETURNING id, status;",
+        "options": {}
+      },
+      "id": "update-search-processing",
+      "name": "📝 Marcar como Procesando",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT j.id, j.title, j.company_name, j.company_logo_url, j.city, j.work_modality, j.contract_type, j.required_education, j.required_experience_years, j.required_skills, j.preferred_skills, j.salary_min, j.salary_max, j.description, j.category, j.tags FROM jobs j WHERE j.status = 'active' AND ({{ $('🔧 Normalizar Datos').item.json.criteria.city != '' }} = false OR j.city ILIKE '%{{ $('🔧 Normalizar Datos').item.json.criteria.city }}%' OR j.work_modality = 'remoto') LIMIT 50;",
+        "options": {}
+      },
+      "id": "fetch-jobs",
+      "name": "🗄️ Consultar Vacantes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [900, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agrupar todas las vacantes en un solo objeto para enviar al scoring\nconst allItems = $input.all();\nconst normalizeNode = $('🔧 Normalizar Datos').first().json;\n\nif (!allItems || allItems.length === 0) {\n  console.log('[AGGREGATE] No se encontraron vacantes');\n  return [{\n    json: {\n      search_id: normalizeNode.search_id,\n      user_id: normalizeNode.user_id,\n      profile: normalizeNode.profile,\n      vacancies: [],\n      jobs_found: 0\n    }\n  }];\n}\n\nconst vacancies = allItems.map(item => ({\n  id: item.json.id,\n  title: item.json.title,\n  company_name: item.json.company_name,\n  city: item.json.city,\n  work_modality: item.json.work_modality,\n  contract_type: item.json.contract_type,\n  required_education: item.json.required_education,\n  required_experience_years: item.json.required_experience_years || 0,\n  required_skills: typeof item.json.required_skills === 'string' \n    ? JSON.parse(item.json.required_skills) \n    : (item.json.required_skills || []),\n  preferred_skills: typeof item.json.preferred_skills === 'string' \n    ? JSON.parse(item.json.preferred_skills) \n    : (item.json.preferred_skills || []),\n  salary_min: item.json.salary_min,\n  salary_max: item.json.salary_max,\n  description: item.json.description,\n  category: item.json.category\n}));\n\nconsole.log(`[AGGREGATE] ${vacancies.length} vacantes listas para scoring`);\n\nreturn [{\n  json: {\n    search_id: normalizeNode.search_id,\n    user_id: normalizeNode.user_id,\n    profile: normalizeNode.profile,\n    vacancies: vacancies,\n    jobs_found: vacancies.length\n  }\n}];"
+      },
+      "id": "aggregate-jobs",
+      "name": "📦 Agregar Vacantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE searches SET jobs_found = {{ $json.jobs_found }}, status = 'scoring' WHERE id = '{{ $json.search_id }}';",
+        "options": {}
+      },
+      "id": "update-jobs-found",
+      "name": "📊 Actualizar Conteo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1340, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://scoring:8001/score",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ profile: $('📦 Agregar Vacantes').item.json.profile, vacancies: $('📦 Agregar Vacantes').item.json.vacancies, top_n: 20 }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "call-scoring",
+      "name": "🧠 Microservicio Scoring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar matches para insertar en PostgreSQL\nconst scoringResponse = $input.first().json;\nconst aggregateData = $('📦 Agregar Vacantes').first().json;\n\nconst results = scoringResponse.results || [];\n\nconsole.log(`[SAVE] Guardando ${results.length} matches para search_id=${aggregateData.search_id}`);\n\nconst matchesForDB = results.map(r => ({\n  search_id: aggregateData.search_id,\n  user_id: aggregateData.user_id,\n  job_id: r.job_id,\n  total_score: r.total_score,\n  skills_score: r.breakdown.skills_score,\n  experience_score: r.breakdown.experience_score,\n  location_score: r.breakdown.location_score,\n  salary_score: r.breakdown.salary_score,\n  education_score: r.breakdown.education_score,\n  modality_score: r.breakdown.modality_score,\n  semantic_score: r.breakdown.semantic_score,\n  score_explanation: JSON.stringify(r.explanation),\n  matched_skills: r.matched_skills,\n  missing_skills: r.missing_skills,\n  rank_position: r.rank_position,\n  recommendation: r.recommendation\n}));\n\nreturn matchesForDB.map(m => ({ json: m }));"
+      },
+      "id": "prepare-matches",
+      "name": "🔄 Preparar Matches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO matches (search_id, user_id, job_id, total_score, skills_score, experience_score, location_score, salary_score, education_score, modality_score, semantic_score, score_explanation, matched_skills, missing_skills, rank_position) VALUES ('{{ $json.search_id }}', '{{ $json.user_id }}', '{{ $json.job_id }}', {{ $json.total_score }}, {{ $json.skills_score }}, {{ $json.experience_score }}, {{ $json.location_score }}, {{ $json.salary_score }}, {{ $json.education_score }}, {{ $json.modality_score }}, {{ $json.semantic_score }}, '{{ $json.score_explanation }}', ARRAY[{{ $json.matched_skills.map(s => `'${s}'`).join(',') }}], ARRAY[{{ $json.missing_skills.map(s => `'${s}'`).join(',') }}], {{ $json.rank_position }}) ON CONFLICT (search_id, job_id) DO NOTHING;",
+        "options": {}
+      },
+      "id": "save-matches",
+      "name": "💾 Guardar Matches",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2000, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE searches SET status = 'completed', jobs_scored = (SELECT COUNT(*) FROM matches WHERE search_id = '{{ $('📦 Agregar Vacantes').item.json.search_id }}'), completed_at = NOW() WHERE id = '{{ $('📦 Agregar Vacantes').item.json.search_id }}';",
+        "options": {}
+      },
+      "id": "complete-search",
+      "name": "✅ Completar Búsqueda",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2220, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notifications (user_id, type, title, message, data) VALUES ('{{ $('📦 Agregar Vacantes').item.json.user_id }}', 'matches_ready', '¡Tus matches están listos!', 'Encontramos {{ $('🧠 Microservicio Scoring').item.json.results.length }} vacantes compatibles con tu perfil. Revísalas ahora.', '{\"search_id\": \"{{ $('📦 Agregar Vacantes').item.json.search_id }}\", \"count\": {{ $('🧠 Microservicio Scoring').item.json.results.length }}}') RETURNING id;",
+        "options": {}
+      },
+      "id": "create-notification",
+      "name": "🔔 Crear Notificación",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simular envío de email de notificación\nconst userId = $('📦 Agregar Vacantes').first().json.user_id;\nconst searchId = $('📦 Agregar Vacantes').first().json.search_id;\nconst matchCount = $('🧠 Microservicio Scoring').first().json.results?.length || 0;\n\nconsole.log(`[EMAIL] Simulando email para user=${userId}`);\nconsole.log(`[EMAIL] Subject: ¡${matchCount} nuevas vacantes compatibles para ti!`);\nconsole.log(`[EMAIL] Body: Hemos encontrado ${matchCount} vacantes que coinciden con tu perfil.`);\nconsole.log(`[EMAIL] URL: http://localhost:3001/matches?search=${searchId}`);\n\n// En producción: usar SendGrid, AWS SES, etc.\n// const emailResult = await sendEmail({ to: userEmail, ... });\n\nreturn [{\n  json: {\n    email_sent: true,\n    simulated: true,\n    user_id: userId,\n    match_count: matchCount,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "send-email",
+      "name": "📧 Notificación Email (Simulado)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:3000/api/n8n/callback",
+        "sendBody": true,
+        "contentType": "json",
+        "body": "={{ JSON.stringify({ search_id: $('📦 Agregar Vacantes').item.json.search_id, status: 'completed', matches_count: $('🧠 Microservicio Scoring').item.json.results?.length || 0 }) }}",
+        "options": {}
+      },
+      "id": "callback-backend",
+      "name": "🔁 Callback Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, search_id: $('📦 Agregar Vacantes').item.json.search_id, message: 'Workflow completado exitosamente', execution_id: $execution.id }) }}"
+      },
+      "id": "respond-webhook",
+      "name": "↩️ Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (user_id, entity_type, entity_id, action, message, service, metadata) VALUES ('{{ $('📦 Agregar Vacantes').item.json.user_id }}', 'search', '{{ $('📦 Agregar Vacantes').item.json.search_id }}', 'WORKFLOW_COMPLETED', 'Workflow n8n ejecutado correctamente', 'n8n', '{\"execution_id\": \"{{ $execution.id }}\", \"matches\": {{ $('🧠 Microservicio Scoring').item.json.results?.length || 0 }}}');",
+        "options": {}
+      },
+      "id": "audit-log",
+      "name": "📋 Registro de Auditoría",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2440, 500],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-credentials",
+          "name": "PostgreSQL Empleabilidad"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "🚀 Webhook Trigger": {
+      "main": [
+        [{ "node": "🔧 Normalizar Datos", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔧 Normalizar Datos": {
+      "main": [
+        [{ "node": "📝 Marcar como Procesando", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Marcar como Procesando": {
+      "main": [
+        [{ "node": "🗄️ Consultar Vacantes", "type": "main", "index": 0 }]
+      ]
+    },
+    "🗄️ Consultar Vacantes": {
+      "main": [
+        [{ "node": "📦 Agregar Vacantes", "type": "main", "index": 0 }]
+      ]
+    },
+    "📦 Agregar Vacantes": {
+      "main": [
+        [{ "node": "📊 Actualizar Conteo", "type": "main", "index": 0 }]
+      ]
+    },
+    "📊 Actualizar Conteo": {
+      "main": [
+        [{ "node": "🧠 Microservicio Scoring", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧠 Microservicio Scoring": {
+      "main": [
+        [{ "node": "🔄 Preparar Matches", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔄 Preparar Matches": {
+      "main": [
+        [{ "node": "💾 Guardar Matches", "type": "main", "index": 0 }]
+      ]
+    },
+    "💾 Guardar Matches": {
+      "main": [
+        [{ "node": "✅ Completar Búsqueda", "type": "main", "index": 0 }]
+      ]
+    },
+    "✅ Completar Búsqueda": {
+      "main": [
+        [
+          { "node": "🔔 Crear Notificación", "type": "main", "index": 0 },
+          { "node": "📋 Registro de Auditoría", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "🔔 Crear Notificación": {
+      "main": [
+        [{ "node": "📧 Notificación Email (Simulado)", "type": "main", "index": 0 }]
+      ]
+    },
+    "📧 Notificación Email (Simulado)": {
+      "main": [
+        [{ "node": "🔁 Callback Backend", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔁 Callback Backend": {
+      "main": [
+        [{ "node": "↩️ Responder Webhook", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/Bogota"
+  },
+  "staticData": null,
+  "tags": [
+    { "createdAt": "2024-01-01T00:00:00.000Z", "updatedAt": "2024-01-01T00:00:00.000Z", "id": "tag-empleabilidad", "name": "empleabilidad-colombia" }
+  ],
+  "triggerCount": 0,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "versionId": "v1"
+}

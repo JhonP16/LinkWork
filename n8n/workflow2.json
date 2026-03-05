@@ -1,0 +1,445 @@
+{
+  "name": "Empleabilidad Colombia - Employment Search Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "employment-search",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "75b4ac60-e4f9-436f-9a94-9dd77a98c21b",
+      "name": "🚀 Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "employment-search-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalizar y validar datos del webhook\nconst body = $input.first().json.body || $input.first().json;\n\nconst searchId = body.search_id;\nconst userId = body.user_id;\nconst profile = body.profile;\nconst criteria = body.criteria || {};\n\nif (!searchId || !userId || !profile) {\n  throw new Error('Datos incompletos: se requiere search_id, user_id y profile');\n}\n\n// Normalizar perfil\nconst normalizedProfile = {\n  user_id: userId,\n  city: (profile.city || '').toLowerCase().trim(),\n  available_to_relocate: Boolean(profile.available_to_relocate),\n  relocation_cities: Array.isArray(profile.relocation_cities) ? profile.relocation_cities : [],\n  work_modality: Array.isArray(profile.work_modality) ? profile.work_modality : ['presencial'],\n  immediate_availability: Boolean(profile.immediate_availability !== false),\n  desired_salary_min: parseInt(profile.desired_salary_min) || null,\n  desired_salary_max: parseInt(profile.desired_salary_max) || null,\n  education_level: profile.education_level || null,\n  years_experience: parseInt(profile.years_experience) || 0,\n  experience_sectors: Array.isArray(profile.experience_sectors) ? profile.experience_sectors : [],\n  technical_skills: Array.isArray(profile.technical_skills) ? profile.technical_skills : [],\n  soft_skills: Array.isArray(profile.soft_skills) ? profile.soft_skills : [],\n  languages: Array.isArray(profile.languages) ? profile.languages : [],\n  bio: profile.bio || ''\n};\n\nconsole.log(`[NORMALIZE] search_id=${searchId} user_id=${userId} skills=${normalizedProfile.technical_skills.length}`);\n\nreturn [{\n  json: {\n    search_id: searchId,\n    user_id: userId,\n    profile: normalizedProfile,\n    criteria: {\n      city: criteria.city || profile.city,\n      work_modality: criteria.work_modality || profile.work_modality,\n      min_salary: criteria.min_salary || profile.desired_salary_min,\n      max_salary: criteria.max_salary || profile.desired_salary_max,\n      keywords: criteria.keywords || '',\n      categories: criteria.categories || []\n    },\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "1f52ee36-4ad6-4f96-8e40-34dd6b88d115",
+      "name": "🔧 Normalizar Datos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE searches SET status = 'processing', workflow_execution_id = '{{ $execution.id }}' WHERE id = '{{ $json.search_id }}' RETURNING id, status;",
+        "options": {}
+      },
+      "id": "e0b68a29-287a-407d-86cb-c1b1dbd52afd",
+      "name": "📝 Marcar como Procesando",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT j.id, j.title, j.company_name, j.company_logo_url, j.city, j.work_modality, j.contract_type, j.required_education, j.required_experience_years, j.required_skills, j.preferred_skills, j.salary_min, j.salary_max, j.description, j.category, j.tags FROM jobs j WHERE j.status = 'active' AND ({{ $('🔧 Normalizar Datos').item.json.criteria.city != '' }} = false OR j.city ILIKE '%{{ $('🔧 Normalizar Datos').item.json.criteria.city }}%' OR j.work_modality = 'remoto') LIMIT 50;",
+        "options": {}
+      },
+      "id": "5ddb5056-20e8-42f4-bebf-7854d9343be7",
+      "name": "🗄️ Consultar Vacantes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        672,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Agrupar todas las vacantes en un solo objeto para enviar al scoring\nconst allItems = $input.all();\nconst normalizeNode = $('🔧 Normalizar Datos').first().json;\n\nif (!allItems || allItems.length === 0) {\n  console.log('[AGGREGATE] No se encontraron vacantes');\n  return [{\n    json: {\n      search_id: normalizeNode.search_id,\n      user_id: normalizeNode.user_id,\n      profile: normalizeNode.profile,\n      vacancies: [],\n      jobs_found: 0\n    }\n  }];\n}\n\nconst vacancies = allItems.map(item => ({\n  id: item.json.id,\n  title: item.json.title,\n  company_name: item.json.company_name,\n  city: item.json.city,\n  work_modality: item.json.work_modality,\n  contract_type: item.json.contract_type,\n  required_education: item.json.required_education,\n  required_experience_years: item.json.required_experience_years || 0,\n  required_skills: typeof item.json.required_skills === 'string' \n    ? JSON.parse(item.json.required_skills) \n    : (item.json.required_skills || []),\n  preferred_skills: typeof item.json.preferred_skills === 'string' \n    ? JSON.parse(item.json.preferred_skills) \n    : (item.json.preferred_skills || []),\n  salary_min: item.json.salary_min,\n  salary_max: item.json.salary_max,\n  description: item.json.description,\n  category: item.json.category\n}));\n\nconsole.log(`[AGGREGATE] ${vacancies.length} vacantes listas para scoring`);\n\nreturn [{\n  json: {\n    search_id: normalizeNode.search_id,\n    user_id: normalizeNode.user_id,\n    profile: normalizeNode.profile,\n    vacancies: vacancies,\n    jobs_found: vacancies.length\n  }\n}];"
+      },
+      "id": "932943bb-f655-4a75-ad09-d6ed7ad99207",
+      "name": "📦 Agregar Vacantes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE searches SET jobs_found = {{ $json.jobs_found }}, status = 'scoring' WHERE id = '{{ $json.search_id }}';",
+        "options": {}
+      },
+      "id": "425ea3ed-9183-4856-8ed2-8ea7f7082e51",
+      "name": "📊 Actualizar Conteo",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1104,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://scoring:8001/score",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"profile\": {{ JSON.stringify($('📦 Agregar Vacantes').item.json.profile) }},\n  \"vacancies\": {{ JSON.stringify($('📦 Agregar Vacantes').item.json.vacancies) }},\n  \"top_n\": 20\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b6dc0899-efda-47fc-b706-fabe1d39665b",
+      "name": "🧠 Microservicio Scoring",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1328,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Preparar matches para insertar en PostgreSQL\nconst scoringResponse = $input.first().json;\nconst aggregateData = $('📦 Agregar Vacantes').first().json;\n\nconst results = scoringResponse.results || [];\n\nconsole.log(`[SAVE] Guardando ${results.length} matches para search_id=${aggregateData.search_id}`);\n\nconst matchesForDB = results.map(r => ({\n  search_id: aggregateData.search_id,\n  user_id: aggregateData.user_id,\n  job_id: r.job_id,\n  total_score: r.total_score,\n  skills_score: r.breakdown.skills_score,\n  experience_score: r.breakdown.experience_score,\n  location_score: r.breakdown.location_score,\n  salary_score: r.breakdown.salary_score,\n  education_score: r.breakdown.education_score,\n  modality_score: r.breakdown.modality_score,\n  semantic_score: r.breakdown.semantic_score,\n  score_explanation: JSON.stringify(r.explanation),\n  matched_skills: r.matched_skills,\n  missing_skills: r.missing_skills,\n  rank_position: r.rank_position,\n  recommendation: r.recommendation\n}));\n\nreturn matchesForDB.map(m => ({ json: m }));"
+      },
+      "id": "3fad69fc-436e-48c6-9f4a-7fc33c4199f7",
+      "name": "🔄 Preparar Matches",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1552,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO matches (\n  search_id,\n  user_id,\n  job_id,\n  total_score,\n  skills_score,\n  experience_score,\n  location_score,\n  salary_score,\n  education_score,\n  modality_score,\n  semantic_score,\n  score_explanation,\n  matched_skills,\n  missing_skills,\n  rank_position\n)\nVALUES (\n  '{{ $json.search_id }}',\n  '{{ $json.user_id }}',\n  '{{ $json.job_id }}',\n  {{ $json.total_score }},\n  {{ $json.skills_score }},\n  {{ $json.experience_score }},\n  {{ $json.location_score }},\n  {{ $json.salary_score }},\n  {{ $json.education_score }},\n  {{ $json.modality_score }},\n  {{ $json.semantic_score }},\n  '{{ $json.score_explanation.replace(/'/g, \"''\") }}',\n\n  CASE\n    WHEN {{ $json.matched_skills?.length || 0 }} > 0\n    THEN ARRAY[\n      {{ $json.matched_skills.map(s => `'${s.replace(/'/g, \"''\")}'`).join(',') }}\n    ]::text[]\n    ELSE ARRAY[]::text[]\n  END,\n\n  CASE\n    WHEN {{ $json.missing_skills?.length || 0 }} > 0\n    THEN ARRAY[\n      {{ $json.missing_skills.map(s => `'${s.replace(/'/g, \"''\")}'`).join(',') }}\n    ]::text[]\n    ELSE ARRAY[]::text[]\n  END,\n\n  {{ $json.rank_position }}\n)\nON CONFLICT (search_id, job_id) DO NOTHING;",
+        "options": {}
+      },
+      "id": "3adbd06c-fe5e-4632-8d25-260573b12a23",
+      "name": "💾 Guardar Matches",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1760,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE searches SET status = 'completed', jobs_scored = (SELECT COUNT(*) FROM matches WHERE search_id = '{{ $('📦 Agregar Vacantes').item.json.search_id }}'), completed_at = NOW() WHERE id = '{{ $('📦 Agregar Vacantes').item.json.search_id }}';",
+        "options": {}
+      },
+      "id": "04946208-784e-451a-9c8d-67e53a526a71",
+      "name": "✅ Completar Búsqueda",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1984,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notifications (user_id, type, title, message, data) VALUES ('{{ $('📦 Agregar Vacantes').item.json.user_id }}', 'matches_ready', '¡Tus matches están listos!', 'Encontramos {{ $('🧠 Microservicio Scoring').item.json.results.length }} vacantes compatibles con tu perfil. Revísalas ahora.', '{\"search_id\": \"{{ $('📦 Agregar Vacantes').item.json.search_id }}\", \"count\": {{ $('🧠 Microservicio Scoring').item.json.results.length }}}') RETURNING id;",
+        "options": {}
+      },
+      "id": "bae6a446-bac4-4b6c-afe1-74ef21faf2f5",
+      "name": "🔔 Crear Notificación",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2208,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simular envío de email de notificación\nconst userId = $('📦 Agregar Vacantes').first().json.user_id;\nconst searchId = $('📦 Agregar Vacantes').first().json.search_id;\nconst matchCount = $('🧠 Microservicio Scoring').first().json.results?.length || 0;\n\nconsole.log(`[EMAIL] Simulando email para user=${userId}`);\nconsole.log(`[EMAIL] Subject: ¡${matchCount} nuevas vacantes compatibles para ti!`);\nconsole.log(`[EMAIL] Body: Hemos encontrado ${matchCount} vacantes que coinciden con tu perfil.`);\nconsole.log(`[EMAIL] URL: http://localhost:3001/matches?search=${searchId}`);\n\n// En producción: usar SendGrid, AWS SES, etc.\n// const emailResult = await sendEmail({ to: userEmail, ... });\n\nreturn [{\n  json: {\n    email_sent: true,\n    simulated: true,\n    user_id: userId,\n    match_count: matchCount,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "6127577d-a6bc-4e63-b16a-cf8dde0f1a8c",
+      "name": "📧 Notificación Email (Simulado)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2432,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://backend:3000/api/n8n/callback",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"search_id\": \"{{$json.search_id}}\"\n}",
+        "options": {}
+      },
+      "id": "48e387f0-bd67-42d0-a727-d3eeb1cee063",
+      "name": "🔁 Callback Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, search_id: $('📦 Agregar Vacantes').item.json.search_id, message: 'Workflow completado exitosamente', execution_id: $execution.id }) }}",
+        "options": {}
+      },
+      "id": "f0964a2d-ffed-45a8-aad2-67126a567c17",
+      "name": "↩️ Responder Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2864,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO audit_logs (user_id, entity_type, entity_id, action, message, service, metadata) VALUES ('{{ $('📦 Agregar Vacantes').item.json.user_id }}', 'search', '{{ $('📦 Agregar Vacantes').item.json.search_id }}', 'WORKFLOW_COMPLETED', 'Workflow n8n ejecutado correctamente', 'n8n', '{\"execution_id\": \"{{ $execution.id }}\", \"matches\": {{ $('🧠 Microservicio Scoring').item.json.results?.length || 0 }}}');",
+        "options": {}
+      },
+      "id": "e65dfba8-aa70-4429-a846-62878b898fa8",
+      "name": "📋 Registro de Auditoría",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2208,
+        208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "BeBbBhT7njAGy5Jj",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "🚀 Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "🔧 Normalizar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔧 Normalizar Datos": {
+      "main": [
+        [
+          {
+            "node": "📝 Marcar como Procesando",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Marcar como Procesando": {
+      "main": [
+        [
+          {
+            "node": "🗄️ Consultar Vacantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🗄️ Consultar Vacantes": {
+      "main": [
+        [
+          {
+            "node": "📦 Agregar Vacantes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📦 Agregar Vacantes": {
+      "main": [
+        [
+          {
+            "node": "📊 Actualizar Conteo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Actualizar Conteo": {
+      "main": [
+        [
+          {
+            "node": "🧠 Microservicio Scoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Microservicio Scoring": {
+      "main": [
+        [
+          {
+            "node": "🔄 Preparar Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔄 Preparar Matches": {
+      "main": [
+        [
+          {
+            "node": "💾 Guardar Matches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "💾 Guardar Matches": {
+      "main": [
+        [
+          {
+            "node": "✅ Completar Búsqueda",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Completar Búsqueda": {
+      "main": [
+        [
+          {
+            "node": "🔔 Crear Notificación",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "📋 Registro de Auditoría",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔔 Crear Notificación": {
+      "main": [
+        [
+          {
+            "node": "📧 Notificación Email (Simulado)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Notificación Email (Simulado)": {
+      "main": [
+        [
+          {
+            "node": "🔁 Callback Backend",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔁 Callback Backend": {
+      "main": [
+        [
+          {
+            "node": "↩️ Responder Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "9d2509ae-3ba2-41b0-8ffa-6b0009f708f8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "89afcd2b9521359b34bc28c3f2634b83acc90fddf4570347508903928315d954"
+  },
+  "id": "H9IZOi7Lwa1FnWMl",
+  "tags": [
+    {
+      "name": "empleabilidad-colombia",
+      "id": "VVpdvWguz4PcuN56",
+      "updatedAt": "2026-03-04T14:26:51.131Z",
+      "createdAt": "2026-03-04T14:26:51.131Z"
+    }
+  ]
+}
