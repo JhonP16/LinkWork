@@ -114,7 +114,7 @@ services:
       DB_POSTGRESDB_DATABASE: n8n
       DB_POSTGRESDB_USER: ${DB_USER:-postgres}
       DB_POSTGRESDB_PASSWORD: ${DB_PASSWORD:-postgres123}
-      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_ACTIVE: "false"
       N8N_BASIC_AUTH_USER: ${N8N_USER:-admin}
       N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD:-admin123}
       N8N_HOST: localhost

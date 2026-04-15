@@ -10,6 +10,7 @@ const logger = require('./utils/logger');
 const { pool } = require('./config/database');
 
 const app = express();
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3000;
 
 // ============================================================

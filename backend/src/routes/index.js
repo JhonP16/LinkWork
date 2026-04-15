@@ -7,7 +7,8 @@ const { register, login, me } = require('../controllers/authController');
 const { getProfile, updateProfile } = require('../controllers/profileController');
 const { getJobs, getJobById } = require('../controllers/jobsController');
 const { triggerSearch, getSearchStatus, getSearchHistory } = require('../controllers/searchController');
-const { updateMatchStatus, getTodayMatches, getApplications } = require('../controllers/matchesController');
+const { applyToJob, updateMatchStatus, getTodayMatches, getApplications } = require('../controllers/matchesController');
+const { searchUsers, getConversations, getMessages, sendMessage, markAsRead, getUnreadCount } = require('../controllers/messagesController');
 const { query } = require('../config/database');
 
 // ============================================================
@@ -40,8 +41,19 @@ router.get('/searches', authenticate, asyncHandler(getSearchHistory));
 // MATCHES
 // ============================================================
 router.get('/matches/today', authenticate, asyncHandler(getTodayMatches));
+router.post('/matches/apply', authenticate, asyncHandler(applyToJob));
 router.patch('/matches/:id', authenticate, asyncHandler(updateMatchStatus));
 router.get('/applications', authenticate, asyncHandler(getApplications));
+
+// ============================================================
+// MESSAGES
+// ============================================================
+router.get('/users/search', authenticate, asyncHandler(searchUsers));
+router.get('/messages/conversations', authenticate, asyncHandler(getConversations));
+router.get('/messages/unread-count', authenticate, asyncHandler(getUnreadCount));
+router.get('/messages/:conversationId', authenticate, asyncHandler(getMessages));
+router.post('/messages', authenticate, asyncHandler(sendMessage));
+router.patch('/messages/:conversationId/read', authenticate, asyncHandler(markAsRead));
 
 // ============================================================
 // NOTIFICATIONS

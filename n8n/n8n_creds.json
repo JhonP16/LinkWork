@@ -1,0 +1,14 @@
+[
+  {
+    "name": "Postgres account",
+    "type": "postgres",
+    "data": {
+      "host": "postgres",
+      "port": 5432,
+      "database": "empleabilidad",
+      "user": "postgres",
+      "password": "postgres123"
+    },
+    "id": "BeBbBhT7njAGy5Jj"
+  }
+]

@@ -494,6 +494,44 @@ VALUES
     ARRAY['analista', 'sistemas', 'sql', 'medellin']
 );
 
+-- ============================================================
+-- TABLA: conversations (mensajería directa)
+-- ============================================================
+CREATE TABLE conversations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_one UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_two UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    last_message_text TEXT,
+    last_message_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT conversations_unique_pair UNIQUE (user_one, user_two),
+    CONSTRAINT conversations_different_users CHECK (user_one <> user_two)
+);
+
+CREATE INDEX idx_conversations_user_one ON conversations(user_one);
+CREATE INDEX idx_conversations_user_two ON conversations(user_two);
+CREATE INDEX idx_conversations_last_message ON conversations(last_message_at DESC NULLS LAST);
+
+CREATE TRIGGER update_conversations_updated_at BEFORE UPDATE ON conversations FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- TABLA: messages (mensajes individuales)
+-- ============================================================
+CREATE TABLE messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    read_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_messages_conversation ON messages(conversation_id, created_at);
+CREATE INDEX idx_messages_sender ON messages(sender_id);
+CREATE INDEX idx_messages_unread ON messages(conversation_id, is_read) WHERE is_read = FALSE;
+
 -- Log de auditoría inicial
 INSERT INTO audit_logs (entity_type, action, message, service, severity)
 VALUES ('system', 'INIT', 'Base de datos inicializada correctamente', 'database', 'INFO');
