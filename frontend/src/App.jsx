@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import linkworkMark from "./assets/linkwork-m.png";
 
 const API_BASE = '/api';
 
@@ -60,9 +61,7 @@ const Sidebar = ({ user, activePage, setActivePage, onLogout, matchCount }) => {
   return (
     <div style={{ width: 220, minHeight: '100vh', background: 'white', borderRight: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', position: 'fixed', left: 0, top: 0, bottom: 0, zIndex: 50 }}>
       <div style={{ padding: '28px 24px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 34, height: 34, background: '#16a34a', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <span style={{ color: 'white', fontWeight: 900, fontSize: 18, fontFamily: 'Inter,sans-serif' }}>m</span>
-        </div>
+        <img src={linkworkMark} alt="M de LinkWork" style={{ width: 34, height: 34, display: 'block' }} />
         <span style={{ fontWeight: 700, fontSize: 17, color: '#111827', fontFamily: 'Inter,sans-serif' }}>LinkWork</span>
       </div>
       <nav style={{ flex: 1, padding: '8px 12px' }}>
@@ -1113,7 +1112,7 @@ const AuthPage = ({ mode, onLogin, onSwitch }) => {
     <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <div style={{ width: 48, height: 48, background: '#16a34a', borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}><span style={{ color: 'white', fontWeight: 900, fontSize: 24, fontFamily: 'Inter,sans-serif' }}>m</span></div>
+          <img src={linkworkMark} alt="M de LinkWork" style={{ width: 48, height: 48, margin: '0 auto 16px', display: 'block' }} />
           <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, color: '#111827', fontFamily: 'Inter,sans-serif' }}>LinkWork</h1>
           <p style={{ margin: '6px 0 0', color: '#6b7280', fontSize: 14, fontFamily: 'Inter,sans-serif' }}>Tu carrera. Tu ritmo. Tu match.</p>
         </div>
@@ -1176,7 +1175,7 @@ export default function App() {
     }
   };
 
-  if (loading) return <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ textAlign: 'center' }}><div style={{ width: 40, height: 40, background: '#16a34a', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}><span style={{ color: 'white', fontWeight: 900, fontSize: 20 }}>m</span></div><p style={{ color: '#9ca3af', fontFamily: 'Inter,sans-serif', fontSize: 14 }}>Cargando...</p></div></div>;
+  if (loading) return <div style={{ minHeight: '100vh', background: '#f9fafb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ textAlign: 'center' }}><img src={linkworkMark} alt="M de LinkWork" style={{ width: 40, height: 40, margin: '0 auto 12px', display: 'block' }} /><p style={{ color: '#9ca3af', fontFamily: 'Inter,sans-serif', fontSize: 14 }}>Cargando...</p></div></div>;
 
   if (!user) return <AuthPage mode={authMode} onLogin={handleLogin} onSwitch={() => setAuthMode(m => m === 'login' ? 'register' : 'login')} />;
 
